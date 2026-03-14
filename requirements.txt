@@ -1,5 +1,6 @@
 pandas
 numpy
-streamlit==1.32.0
+streamlit
 plotly
 altair<5
+pillow==10.3.0
