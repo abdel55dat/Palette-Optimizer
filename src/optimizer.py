@@ -4,95 +4,118 @@ from src.generate_data import MAX_PALETTES_SOL, HAUTEUR_MAX_STACK_CM
 
 def optimiser_chargement(df_palettes):
     camions = []
-    camion_actuel = {
-        "id": 1,
+
+    # Regrouper par destination ET client
+    groupes = df_palettes.groupby(["TOWN", "CUSTOMER"])
+
+    for (town, customer), group in groupes:
+        df_fp = group[group["PALLET_TYPE"] == "FP"].to_dict("records")
+        df_ltl = group[group["PALLET_TYPE"] == "LTL"].to_dict("records")
+
+        ltl_restants = list(df_ltl)
+        camion_actuel = None
+
+        # Charger les FP en essayant de stacker les LTL dessus
+        for fp in df_fp:
+            hauteur_fp = fp["HAUTEUR_PALETTE_CM"]
+            stack_autorise = fp["STACK_AUTORISE"]
+
+            # Cherche une LTL compatible
+            ltl_stackee = None
+            if stack_autorise and ltl_restants:
+                for ltl in ltl_restants:
+                    if hauteur_fp + ltl["HAUTEUR_PALETTE_CM"] <= HAUTEUR_MAX_STACK_CM:
+                        ltl_stackee = ltl
+                        ltl_restants.remove(ltl)
+                        break
+
+            # Nouveau camion si nécessaire
+            if camion_actuel is None or camion_actuel["slots_utilises"] + 1 > MAX_PALETTES_SOL:
+                if camion_actuel:
+                    camions.append(camion_actuel)
+                camion_actuel = _nouveau_camion(len(camions) + 1, town, customer)
+
+            slot = camion_actuel["slot_counter"]
+            hauteur_totale = hauteur_fp + (ltl_stackee["HAUTEUR_PALETTE_CM"] if ltl_stackee else 0)
+
+            camion_actuel["slots"][slot] = {
+                "bottom": fp["PALLET_ID"],
+                "top": ltl_stackee["PALLET_ID"] if ltl_stackee else None,
+                "hauteur_totale_cm": hauteur_totale,
+                "stacked": ltl_stackee is not None,
+            }
+            camion_actuel["palettes"].append(_palette_row(fp, slot, "BOTTOM"))
+            if ltl_stackee:
+                camion_actuel["palettes"].append(_palette_row(ltl_stackee, slot, "TOP"))
+
+            camion_actuel["slots_utilises"] += 1
+            camion_actuel["slot_counter"] += 1
+
+        # LTL restantes non stackées → slots seuls
+        for ltl in ltl_restants:
+            if camion_actuel is None or camion_actuel["slots_utilises"] + 1 > MAX_PALETTES_SOL:
+                if camion_actuel:
+                    camions.append(camion_actuel)
+                camion_actuel = _nouveau_camion(len(camions) + 1, town, customer)
+
+            slot = camion_actuel["slot_counter"]
+            camion_actuel["slots"][slot] = {
+                "bottom": ltl["PALLET_ID"],
+                "top": None,
+                "hauteur_totale_cm": ltl["HAUTEUR_PALETTE_CM"],
+                "stacked": False,
+            }
+            camion_actuel["palettes"].append(_palette_row(ltl, slot, "BOTTOM"))
+            camion_actuel["slots_utilises"] += 1
+            camion_actuel["slot_counter"] += 1
+
+        if camion_actuel:
+            camions.append(camion_actuel)
+
+    # Renuméroter
+    for i, c in enumerate(camions):
+        c["id"] = i + 1
+
+    return camions
+
+
+def _nouveau_camion(id, destination, customer):
+    return {
+        "id": id,
+        "destination_principale": destination,
+        "customer": customer,
         "palettes": [],
-        "slots": {},  # slot -> [palette_bottom, palette_top?]
+        "slots": {},
+        "slots_utilises": 0,
         "slot_counter": 1,
     }
 
-    # Grouper les palettes par ORDER_ID pour ne pas splitter une commande
-    orders = df_palettes.groupby("ORDER_ID")
 
-    for order_id, group in orders:
-        stack_autorise = group["STACK_AUTORISE"].iloc[0]
-        hauteur = group["HAUTEUR_PALETTE_CM"].iloc[0]
-        peut_stacker = stack_autorise and (hauteur * 2) <= HAUTEUR_MAX_STACK_CM
-        palettes_order = group["PALLET_ID"].tolist()
-
-        # Calcul des slots nécessaires pour cette commande
-        if peut_stacker:
-            slots_necessaires = -(-len(palettes_order) // 2)  # arrondi supérieur
-        else:
-            slots_necessaires = len(palettes_order)
-
-        # Vérifie si la commande entière rentre dans le camion actuel
-        slots_utilises = camion_actuel["slot_counter"] - 1
-        if slots_utilises + slots_necessaires > MAX_PALETTES_SOL:
-            # Camion plein, on en ouvre un nouveau
-            camions.append(camion_actuel)
-            camion_actuel = {
-                "id": len(camions) + 1,
-                "palettes": [],
-                "slots": {},
-                "slot_counter": 1,
-            }
-
-        # Chargement des palettes dans le camion
-        palette_iter = iter(palettes_order)
-        for palette_id in palette_iter:
-            slot = camion_actuel["slot_counter"]
-            if peut_stacker:
-                # On essaie de mettre 2 palettes par slot
-                try:
-                    palette_top = next(palette_iter)
-                    camion_actuel["slots"][slot] = {
-                        "bottom": palette_id,
-                        "top": palette_top,
-                        "hauteur_totale_cm": hauteur * 2,
-                    }
-                except StopIteration:
-                    # Nombre impair, dernière palette seule
-                    camion_actuel["slots"][slot] = {
-                        "bottom": palette_id,
-                        "top": None,
-                        "hauteur_totale_cm": hauteur,
-                    }
-            else:
-                camion_actuel["slots"][slot] = {
-                    "bottom": palette_id,
-                    "top": None,
-                    "hauteur_totale_cm": hauteur,
-                }
-            camion_actuel["palettes"].append({
-                "PALLET_ID": palette_id,
-                "ORDER_ID": order_id,
-                "SLOT": slot,
-                "LEVEL": "BOTTOM",
-                "HAUTEUR_CM": hauteur,
-                "STACK_AUTORISE": stack_autorise,
-                "CUSTOMER": group["CUSTOMER"].iloc[0],
-                "TOWN": group["TOWN"].iloc[0],
-            })
-            camion_actuel["slot_counter"] += 1
-
-    camions.append(camion_actuel)
-    return camions
+def _palette_row(palette, slot, level):
+    return {
+        "PALLET_ID": palette["PALLET_ID"],
+        "PALLET_TYPE": palette["PALLET_TYPE"],
+        "ORDER_ID": palette["ORDER_ID"],
+        "SLOT": slot,
+        "LEVEL": level,
+        "CUSTOMER": palette["CUSTOMER"],
+        "TOWN": palette["TOWN"],
+        "HAUTEUR_CM": palette["HAUTEUR_PALETTE_CM"],
+    }
 
 
 def resume_chargement(camions):
     rows = []
     for c in camions:
-        slots_utilises = c["slot_counter"] - 1
-        clients = list(set([p["CUSTOMER"] for p in c["palettes"]]))
-        villes = list(set([p["TOWN"] for p in c["palettes"]]))
+        nb_stacked = sum(1 for s in c["slots"].values() if s["stacked"])
         rows.append({
             "TRUCK_ID": f"Camion {c['id']}",
-            "PALETTES_AU_SOL": slots_utilises,
-            "TAUX_REMPLISSAGE_%": round(slots_utilises / MAX_PALETTES_SOL * 100, 1),
+            "CLIENT": c["customer"],
+            "DESTINATION": c["destination_principale"],
+            "PALETTES_AU_SOL": c["slots_utilises"],
+            "PALETTES_STACKEES": nb_stacked,
+            "TAUX_REMPLISSAGE_%": round(c["slots_utilises"] / MAX_PALETTES_SOL * 100, 1),
             "NB_COMMANDES": len(set([p["ORDER_ID"] for p in c["palettes"]])),
-            "CLIENTS": ", ".join(clients),
-            "DESTINATIONS": ", ".join(villes),
         })
     return pd.DataFrame(rows)
 
@@ -107,7 +130,7 @@ def detail_chargement(camions):
                 "PALLET_BOTTOM": contenu["bottom"],
                 "PALLET_TOP": contenu["top"] if contenu["top"] else "-",
                 "HAUTEUR_TOTALE_CM": contenu["hauteur_totale_cm"],
-                "STACKED": contenu["top"] is not None,
+                "STACKED": contenu["stacked"],
             })
     return pd.DataFrame(rows)
 
@@ -118,6 +141,6 @@ if __name__ == "__main__":
     df_pal = generate_palettes(df_cmd)
     camions = optimiser_chargement(df_pal)
     print("RÉSUMÉ")
-    print(resume_chargement(camions))
+    print(resume_chargement(camions).to_string())
     print("\nDÉTAIL CAMION 1")
-    print(detail_chargement(camions)[:10])
+    print(detail_chargement(camions)[:15].to_string())
