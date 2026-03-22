@@ -1,17 +1,20 @@
-#Palette Optimizer
+# Palette Optimizer
 
-Simulateur d'optimisation de chargement de camions basé sur des contraintes logistiques réelles.
+Simulateur d'optimisation de chargement de camions basé sur des 
+contraintes logistiques réelles.
 
-## Fonctionnalités
-- Génération de commandes fictives avec SKUs, clients, destinations
-- Algorithme d'optimisation du chargement (stack, contraintes hauteur)
-- Dashboard interactif Streamlit
+[Voir la démo live](https://palette-optimizer.streamlit.app)
+
+## Objectif
+Générer des commandes fictives et optimiser leur chargement selon 
+les contraintes de hauteur, de poids et de configuration palette — 
+FP/LTL, regroupement client/destination.
 
 ## Stack
-Python · Pandas · Streamlit · Plotly
+Python · Streamlit · Plotly · Pandas
 
-## Lancer le projet
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+## Contexte
+Je suis data analyst avec un background logistique/supply chain.
+Ouvert aux opportunités CDI.
+
+[LinkedIn](https://www.linkedin.com/in/abdel-amine-lawani-000b15219/)
